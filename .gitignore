@@ -16,3 +16,9 @@ runs/
 
 # Model files
 *.pt
+.venv/
+runs/
+logs/
+screenshots/
+__pycache__/
+*.pyc

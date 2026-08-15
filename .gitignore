@@ -1,12 +1,10 @@
 # Virtual Environment
 .venv/
 
-# Python cache
+# Python
 __pycache__/
 *.pyc
-
-# YOLO output
-runs/
+*.pyo
 
 # macOS
 .DS_Store
@@ -14,11 +12,14 @@ runs/
 # VS Code
 .vscode/
 
-# Model files
-*.pt
-.venv/
+# YOLO / Training Outputs
 runs/
+
+# Logs
 logs/
+
+# Screenshots
 screenshots/
-__pycache__/
-*.pyc
+
+# YOLO Model Files
+*.pt

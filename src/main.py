@@ -1,9 +1,7 @@
 import cv2
 import time
 import os
-import csv
 from collections import defaultdict, deque
-from datetime import datetime
 from ultralytics import YOLO
 
 
@@ -14,77 +12,41 @@ from ultralytics import YOLO
 PERSON_MODEL = "yolov8n.pt"
 HELMET_MODEL = "models/helmet.pt"
 
-PERSON_CONF = 0.60
-HELMET_CONF = 0.75
+PERSON_CONF = 0.45
 
-SCREENSHOT_FOLDER = "screenshots"
-LOG_FOLDER = "logs"
-LOG_FILE = os.path.join(LOG_FOLDER, "helmet_violations.csv")
+HELMET_CONF = 0.05
 
-# Only upper part of person is used for helmet detection
-HEAD_REGION_RATIO = 0.50
+WITH_HELMET_THRESHOLD = 0.10
+WITHOUT_HELMET_THRESHOLD = 0.18
 
-# Number of recent predictions used for smoothing
-HISTORY_SIZE = 7
+HEAD_REGION_RATIO = 0.45
 
-# Minimum votes required for a final decision
-MIN_VOTES = 4
+HISTORY_SIZE = 8
 
-# Alert screenshot cooldown
-ALERT_COOLDOWN = 5
+WITH_HELMET_VOTES = 4
+WITHOUT_HELMET_VOTES = 4
+
+MAX_MISSING_FRAMES = 6
 
 
 # =========================================================
-# FOLDERS
+# CREATE DIRECTORIES
 # =========================================================
 
-os.makedirs(SCREENSHOT_FOLDER, exist_ok=True)
-os.makedirs(LOG_FOLDER, exist_ok=True)
-
-
-# =========================================================
-# LOG VIOLATION
-# =========================================================
-
-def save_violation_log(person_id):
-
-    file_exists = os.path.isfile(LOG_FILE)
-
-    with open(LOG_FILE, "a", newline="") as file:
-
-        writer = csv.writer(file)
-
-        if not file_exists:
-            writer.writerow([
-                "Time",
-                "Person_ID",
-                "Status"
-            ])
-
-        current_time = datetime.now().strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-
-        writer.writerow([
-            current_time,
-            person_id,
-            "Without Helmet"
-        ])
+os.makedirs("screenshots", exist_ok=True)
+os.makedirs("logs", exist_ok=True)
 
 
 # =========================================================
-# SAVE SCREENSHOT
+# SCREENSHOT
 # =========================================================
 
 def save_screenshot(frame, person_id):
 
-    timestamp = datetime.now().strftime(
-        "%Y%m%d_%H%M%S"
-    )
-
-    filename = os.path.join(
-        SCREENSHOT_FOLDER,
-        f"no_helmet_person_{person_id}_{timestamp}.jpg"
+    filename = (
+        f"screenshots/"
+        f"person_{person_id}_"
+        f"{int(time.time())}.jpg"
     )
 
     cv2.imwrite(filename, frame)
@@ -93,26 +55,357 @@ def save_screenshot(frame, person_id):
 
 
 # =========================================================
+# LOG
+# =========================================================
+
+def save_violation_log(person_id):
+
+    os.makedirs("logs", exist_ok=True)
+
+    filename = "logs/helmet_violations.csv"
+
+    new_file = not os.path.exists(filename)
+
+    with open(filename, "a") as f:
+
+        if new_file:
+            f.write("timestamp,person_id,violation\n")
+
+        f.write(
+            f"{time.strftime('%Y-%m-%d %H:%M:%S')},"
+            f"{person_id},"
+            f"NO HELMET\n"
+        )
+
+    print(
+        f"Violation logged: Person {person_id}"
+    )
+
+
+# =========================================================
+# PERSON BOX VALIDATION
+# =========================================================
+
+def valid_person_box(x1, y1, x2, y2):
+
+    width = x2 - x1
+    height = y2 - y1
+
+    if width < 70:
+        return False
+
+    if height < 120:
+        return False
+
+    aspect_ratio = (
+        width /
+        max(height, 1)
+    )
+
+    if aspect_ratio < 0.20:
+        return False
+
+    if aspect_ratio > 2.20:
+        return False
+
+    return True
+
+
+# =========================================================
+# HELMET BOX VALIDATION
+# =========================================================
+
+def valid_helmet_box(
+    box,
+    roi_width,
+    roi_height
+):
+
+    hx1, hy1, hx2, hy2 = box
+
+    box_width = hx2 - hx1
+    box_height = hy2 - hy1
+
+    if box_width <= 0:
+        return False
+
+    if box_height <= 0:
+        return False
+
+    if box_width < roi_width * 0.05:
+        return False
+
+    if box_height < roi_height * 0.03:
+        return False
+
+    center_y = (
+        hy1 + hy2
+    ) / 2
+
+    center_ratio = (
+        center_y /
+        max(roi_height, 1)
+    )
+
+    if center_ratio > 0.90:
+        return False
+
+    return True
+
+
+# =========================================================
+# HELMET DETECTION
+# =========================================================
+
+def detect_helmet(
+    helmet_model,
+    head_crop
+):
+
+    if head_crop is None or head_crop.size == 0:
+        return None
+
+    roi_height, roi_width = head_crop.shape[:2]
+
+    results = helmet_model(
+        head_crop,
+        conf=HELMET_CONF,
+        iou=0.45,
+        imgsz=640,
+        max_det=3,
+        verbose=False
+    )
+
+    result = results[0]
+
+    if result.boxes is None or len(result.boxes) == 0:
+        return None
+
+    best_by_class = {
+        0: None,
+        1: None
+    }
+
+    for box in result.boxes:
+
+        class_id = int(box.cls[0])
+        confidence = float(box.conf[0])
+
+        if class_id not in (0, 1):
+            continue
+
+        hx1, hy1, hx2, hy2 = map(
+            int,
+            box.xyxy[0]
+        )
+
+        current_box = (
+            hx1,
+            hy1,
+            hx2,
+            hy2
+        )
+
+        if not valid_helmet_box(
+            current_box,
+            roi_width,
+            roi_height
+        ):
+            continue
+
+        threshold = (
+            WITH_HELMET_THRESHOLD
+            if class_id == 0
+            else WITHOUT_HELMET_THRESHOLD
+        )
+
+        if confidence < threshold:
+            continue
+
+        old = best_by_class[class_id]
+
+        if old is None or confidence > old["confidence"]:
+
+            best_by_class[class_id] = {
+                "class": class_id,
+                "confidence": confidence,
+                "box": current_box
+            }
+
+    with_det = best_by_class[0]
+    without_det = best_by_class[1]
+
+    if with_det is None and without_det is None:
+        return None
+
+    if with_det is not None and without_det is None:
+        return with_det
+
+    if without_det is not None and with_det is None:
+        return without_det
+
+    with_conf = with_det["confidence"]
+    without_conf = without_det["confidence"]
+
+    margin = 0.05
+
+    if with_conf >= without_conf + margin:
+        return with_det
+
+    if without_conf >= with_conf + margin:
+        return without_det
+
+    return None
+
+
+# =========================================================
+# STATUS CALCULATION
+# =========================================================
+
+def calculate_status(state):
+
+    history = state["history"]
+
+    if len(history) < 3:
+        return "Checking..."
+
+    with_votes = history.count(
+        "With Helmet"
+    )
+
+    without_votes = history.count(
+        "Without Helmet"
+    )
+
+    if (
+        with_votes >= WITH_HELMET_VOTES
+        and with_votes > without_votes
+    ):
+
+        state["status"] = "With Helmet"
+
+        return "With Helmet"
+
+    if (
+        without_votes >= WITHOUT_HELMET_VOTES
+        and without_votes > with_votes
+    ):
+
+        state["status"] = "Without Helmet"
+
+        return "Without Helmet"
+
+    return "Checking..."
+
+
+# =========================================================
+# UPDATE PERSON STATE
+# =========================================================
+
+def update_person_state(
+    state,
+    detection
+):
+
+    history = state["history"]
+
+    if detection is None:
+
+        state["missing_frames"] += 1
+
+        if (
+            state["missing_frames"]
+            >= MAX_MISSING_FRAMES
+        ):
+
+            history.clear()
+
+            state["status"] = "Checking..."
+
+        return "Checking..."
+
+    state["missing_frames"] = 0
+
+    class_id = detection["class"]
+    confidence = detection["confidence"]
+
+    if class_id == 0:
+
+        if (
+            confidence
+            >= WITH_HELMET_THRESHOLD
+        ):
+
+            history.append(
+                "With Helmet"
+            )
+
+    elif class_id == 1:
+
+        if (
+            confidence
+            >= WITHOUT_HELMET_THRESHOLD
+        ):
+
+            history.append(
+                "Without Helmet"
+            )
+
+    return calculate_status(state)
+
+
+# =========================================================
 # MAIN
 # =========================================================
 
 def main():
 
-    print("Loading Person Detection Model...")
-    person_model = YOLO(PERSON_MODEL)
+    print()
+    print("======================================")
+    print("          VisionGuard AI")
+    print("======================================")
+    print()
 
-    print("Loading Helmet Detection Model...")
-    helmet_model = YOLO(HELMET_MODEL)
+    print(
+        "Loading Person Detection Model..."
+    )
+
+    person_model = YOLO(
+        PERSON_MODEL
+    )
+
+    print(
+        "Loading Helmet Detection Model..."
+    )
+
+    helmet_model = YOLO(
+        HELMET_MODEL
+    )
 
     print()
-    print("Both models loaded successfully.")
-    print()
-    print("Starting camera...")
-    print("Press Q to quit.")
+    print("Helmet Classes:")
 
-    # =====================================================
-    # CAMERA
-    # =====================================================
+    for class_id, name in (
+        helmet_model.names.items()
+    ):
+
+        print(
+            f"  {class_id}: {name}"
+        )
+
+    print()
+    print(
+        "Both models loaded successfully."
+    )
+
+    print()
+    print(
+        "Starting camera..."
+    )
+
+    print(
+        "Press Q to quit."
+    )
 
     camera = cv2.VideoCapture(
         0,
@@ -121,26 +414,32 @@ def main():
 
     if not camera.isOpened():
 
-        print("Camera not opened.")
+        print(
+            "ERROR: Camera not opened."
+        )
+
         return
 
-    print("Camera Started")
+    print(
+        "Camera Started"
+    )
 
     previous_time = time.time()
 
-    # =====================================================
-    # TRACKING STATUS
-    # =====================================================
+    person_states = defaultdict(
+        lambda: {
 
-    status_history = defaultdict(
-        lambda: deque(maxlen=HISTORY_SIZE)
+            "history": deque(
+                maxlen=HISTORY_SIZE
+            ),
+
+            "missing_frames": 0,
+
+            "status": "Checking...",
+
+            "alert_sent": False
+        }
     )
-
-    last_alert_time = {}
-
-    # =====================================================
-    # MAIN LOOP
-    # =====================================================
 
     while True:
 
@@ -148,80 +447,104 @@ def main():
 
         if not success:
 
-            print("Unable to read frame.")
+            print(
+                "Unable to read frame."
+            )
+
             break
 
+        frame_height, frame_width = (
+            frame.shape[:2]
+        )
+
+        output_frame = frame.copy()
+
         # =================================================
-        # PERSON DETECTION + TRACKING
+        # PERSON TRACKING
         # =================================================
 
         results = person_model.track(
+
             frame,
+
             persist=True,
+
             tracker="bytetrack.yaml",
+
             classes=[0],
+
             conf=PERSON_CONF,
+
+            imgsz=416,
+
             verbose=False
         )
 
         result = results[0]
 
-        output_frame = frame.copy()
-
         person_count = 0
 
         # =================================================
-        # PERSON PROCESSING
+        # PROCESS PERSONS
         # =================================================
 
-        if result.boxes is not None:
-
-            person_count = len(result.boxes)
+        if (
+            result.boxes is not None
+            and len(result.boxes) > 0
+        ):
 
             for box in result.boxes:
 
-                class_id = int(box.cls[0])
+                class_id = int(
+                    box.cls[0]
+                )
 
                 if class_id != 0:
                     continue
 
-                confidence = float(box.conf[0])
+                if box.id is None:
+                    continue
 
-                # -----------------------------------------
-                # TRACK ID
-                # -----------------------------------------
-
-                if box.id is not None:
-
-                    person_id = int(box.id[0])
-
-                else:
-
-                    person_id = -1
-
-                # -----------------------------------------
-                # PERSON BOX
-                # -----------------------------------------
+                person_id = int(
+                    box.id[0]
+                )
 
                 x1, y1, x2, y2 = map(
                     int,
                     box.xyxy[0]
                 )
 
-                height, width = frame.shape[:2]
+                x1 = max(
+                    0,
+                    x1
+                )
 
-                x1 = max(0, x1)
-                y1 = max(0, y1)
+                y1 = max(
+                    0,
+                    y1
+                )
 
-                x2 = min(width, x2)
-                y2 = min(height, y2)
+                x2 = min(
+                    frame_width,
+                    x2
+                )
 
-                if x2 <= x1 or y2 <= y1:
+                y2 = min(
+                    frame_height,
+                    y2
+                )
+
+                if not valid_person_box(
+                    x1,
+                    y1,
+                    x2,
+                    y2
+                ):
                     continue
 
-                # -----------------------------------------
+                person_count += 1
+
                 # PERSON BOX
-                # -----------------------------------------
 
                 cv2.rectangle(
                     output_frame,
@@ -234,30 +557,47 @@ def main():
                 cv2.putText(
                     output_frame,
                     f"Person ID: {person_id}",
-                    (x1, max(25, y1 - 10)),
+                    (
+                        x1,
+                        max(
+                            25,
+                            y1 - 10
+                        )
+                    ),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.65,
                     (255, 0, 0),
                     2
                 )
 
-                # =================================================
-                # HEAD / UPPER-BODY ROI
-                # =================================================
+                # PERSON CROP
 
                 person_crop = frame[
                     y1:y2,
                     x1:x2
                 ]
 
-                crop_height, crop_width = person_crop.shape[:2]
-
-                if crop_height < 40 or crop_width < 40:
+                if person_crop.size == 0:
                     continue
 
-                # Only upper 50% of person
-                head_height = int(
-                    crop_height * HEAD_REGION_RATIO
+                crop_height, crop_width = (
+                    person_crop.shape[:2]
+                )
+
+                if (
+                    crop_height < 80
+                    or crop_width < 40
+                ):
+                    continue
+
+                # HEAD REGION
+
+                head_height = max(
+                    1,
+                    int(
+                        crop_height *
+                        HEAD_REGION_RATIO
+                    )
                 )
 
                 head_crop = person_crop[
@@ -268,161 +608,94 @@ def main():
                 if head_crop.size == 0:
                     continue
 
-                # =================================================
-                # HELMET DETECTION
-                # =================================================
+                # ROI GUIDE
 
-                helmet_results = helmet_model(
-                    head_crop,
-                    conf=HELMET_CONF,
-                    verbose=False
+                cv2.rectangle(
+                    output_frame,
+                    (x1, y1),
+                    (
+                        x2,
+                        min(
+                            y2,
+                            y1 + head_height
+                        )
+                    ),
+                    (255, 255, 0),
+                    1
                 )
 
-                helmet_result = helmet_results[0]
+                # HELMET DETECTION
 
-                frame_status = None
+                helmet_detection = detect_helmet(
+                    helmet_model,
+                    head_crop
+                )
 
-                best_confidence = 0.0
-                best_box = None
-                best_class = None
+                # STATE
 
-                # =================================================
-                # PROCESS HELMET DETECTIONS
-                # =================================================
+                state = person_states[
+                    person_id
+                ]
 
-                if helmet_result.boxes is not None:
+                final_status = (
+                    update_person_state(
+                        state,
+                        helmet_detection
+                    )
+                )
 
-                    for helmet_box in helmet_result.boxes:
+                # HELMET BOX
 
-                        helmet_class = int(
-                            helmet_box.cls[0]
-                        )
+                if helmet_detection is not None:
 
-                        helmet_confidence = float(
-                            helmet_box.conf[0]
-                        )
-
-                        hx1, hy1, hx2, hy2 = map(
-                            int,
-                            helmet_box.xyxy[0]
-                        )
-
-                        # Keep only strongest detection
-                        if helmet_confidence > best_confidence:
-
-                            best_confidence = helmet_confidence
-                            best_box = (
-                                hx1,
-                                hy1,
-                                hx2,
-                                hy2
-                            )
-                            best_class = helmet_class
-
-                # =================================================
-                # CURRENT FRAME STATUS
-                # =================================================
-
-                if best_class is not None:
-
-                    if best_class == 0:
-
-                        frame_status = "With Helmet"
-
-                    elif best_class == 1:
-
-                        frame_status = "Without Helmet"
-
-                # =================================================
-                # TEMPORAL SMOOTHING
-                # =================================================
-
-                if frame_status is not None:
-
-                    status_history[person_id].append(
-                        frame_status
+                    hx1, hy1, hx2, hy2 = (
+                        helmet_detection[
+                            "box"
+                        ]
                     )
 
-                history = status_history[person_id]
-
-                final_status = "Checking..."
-
-                if len(history) >= MIN_VOTES:
-
-                    with_helmet_votes = history.count(
-                        "With Helmet"
+                    confidence = (
+                        helmet_detection[
+                            "confidence"
+                        ]
                     )
 
-                    without_helmet_votes = history.count(
-                        "Without Helmet"
+                    helmet_class = (
+                        helmet_detection[
+                            "class"
+                        ]
                     )
 
-                    # -----------------------------------------
-                    # WITH HELMET
-                    # -----------------------------------------
-
-                    if (
-                        with_helmet_votes
-                        >= MIN_VOTES
-                        and with_helmet_votes
-                        > without_helmet_votes
-                    ):
-
-                        final_status = "With Helmet"
-
-                    # -----------------------------------------
-                    # WITHOUT HELMET
-                    # -----------------------------------------
-
-                    elif (
-                        without_helmet_votes
-                        >= MIN_VOTES
-                        and without_helmet_votes
-                        > with_helmet_votes
-                    ):
-
-                        final_status = "Without Helmet"
-
-                # =================================================
-                # DRAW HELMET BOX
-                # =================================================
-
-                if best_box is not None:
-
-                    hx1, hy1, hx2, hy2 = best_box
-
-                    # Convert head ROI coordinates
-                    # back to original frame
                     hx1 += x1
                     hx2 += x1
+
                     hy1 += y1
                     hy2 += y1
 
-                    if final_status == "With Helmet":
+                    if helmet_class == 0:
 
-                        color = (0, 255, 0)
+                        color = (
+                            0,
+                            255,
+                            0
+                        )
 
                         label = (
                             f"With Helmet "
-                            f"{best_confidence:.2f}"
-                        )
-
-                    elif final_status == "Without Helmet":
-
-                        color = (0, 0, 255)
-
-                        label = (
-                            f"Without Helmet "
-                            f"{best_confidence:.2f}"
+                            f"{confidence:.2f}"
                         )
 
                     else:
 
-                        color = (255, 255, 0)
+                        color = (
+                            0,
+                            0,
+                            255
+                        )
 
                         label = (
-                            f"Checking "
-                            f"{best_confidence:.2f}"
+                            f"Without Helmet "
+                            f"{confidence:.2f}"
                         )
 
                     cv2.rectangle(
@@ -436,50 +709,85 @@ def main():
                     cv2.putText(
                         output_frame,
                         label,
-                        (hx1, max(25, hy1 - 10)),
+                        (
+                            hx1,
+                            max(
+                                25,
+                                hy1 - 10
+                            )
+                        ),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.65,
+                        0.60,
                         color,
                         2
                     )
 
-                # =================================================
-                # STATUS FOR PERSON
-                # =================================================
+                # STATUS POSITION
 
                 status_y = y2 + 25
 
-                if status_y >= height:
-                    status_y = y2 - 10
+                if status_y >= frame_height:
 
-                if final_status == "With Helmet":
+                    status_y = max(
+                        25,
+                        y2 - 10
+                    )
 
-                    status_color = (0, 255, 0)
+                # SAFE
+
+                if final_status == (
+                    "With Helmet"
+                ):
+
+                    status_color = (
+                        0,
+                        255,
+                        0
+                    )
 
                     status_text = (
                         f"ID {person_id}: SAFE"
                     )
 
-                elif final_status == "Without Helmet":
+                # NO HELMET
 
-                    status_color = (0, 0, 255)
+                elif final_status == (
+                    "Without Helmet"
+                ):
+
+                    status_color = (
+                        0,
+                        0,
+                        255
+                    )
 
                     status_text = (
-                        f"ID {person_id}: NO HELMET"
+                        f"ID {person_id}: "
+                        f"NO HELMET"
                     )
+
+                # CHECKING
 
                 else:
 
-                    status_color = (255, 255, 0)
+                    status_color = (
+                        255,
+                        255,
+                        0
+                    )
 
                     status_text = (
-                        f"ID {person_id}: CHECKING"
+                        f"ID {person_id}: "
+                        f"CHECKING"
                     )
 
                 cv2.putText(
                     output_frame,
                     status_text,
-                    (x1, status_y),
+                    (
+                        x1,
+                        status_y
+                    ),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.65,
                     status_color,
@@ -490,14 +798,11 @@ def main():
                 # ALERT
                 # =================================================
 
+                # Helmet pehenne par alert reset
+                if final_status == "With Helmet":
+                    state["alert_sent"] = False
+
                 if final_status == "Without Helmet":
-
-                    current_time = time.time()
-
-                    last_time = last_alert_time.get(
-                        person_id,
-                        0
-                    )
 
                     cv2.putText(
                         output_frame,
@@ -509,11 +814,8 @@ def main():
                         3
                     )
 
-                    # Save only once every few seconds
-                    if (
-                        current_time - last_time
-                        >= ALERT_COOLDOWN
-                    ):
+                    # Same person ke liye sirf ek baar
+                    if not state["alert_sent"]:
 
                         save_screenshot(
                             output_frame,
@@ -524,12 +826,11 @@ def main():
                             person_id
                         )
 
-                        last_alert_time[
-                            person_id
-                        ] = current_time
+                        state["alert_sent"] = True
 
                         print(
-                            f"ALERT: Person {person_id} "
+                            f"ALERT: Person "
+                            f"{person_id} "
                             f"without helmet"
                         )
 
@@ -540,12 +841,16 @@ def main():
         current_time = time.time()
 
         time_difference = (
-            current_time - previous_time
+            current_time -
+            previous_time
         )
 
         if time_difference > 0:
 
-            fps = 1 / time_difference
+            fps = (
+                1 /
+                time_difference
+            )
 
         else:
 
@@ -560,7 +865,10 @@ def main():
         cv2.putText(
             output_frame,
             "VisionGuard AI",
-            (20, 40),
+            (
+                20,
+                40
+            ),
             cv2.FONT_HERSHEY_SIMPLEX,
             1,
             (0, 255, 0),
@@ -574,7 +882,10 @@ def main():
         cv2.putText(
             output_frame,
             f"Persons: {person_count}",
-            (20, 80),
+            (
+                20,
+                80
+            ),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
             (255, 255, 255),
@@ -588,7 +899,10 @@ def main():
         cv2.putText(
             output_frame,
             f"FPS: {int(fps)}",
-            (20, 115),
+            (
+                20,
+                115
+            ),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
             (255, 255, 255),
@@ -608,21 +922,31 @@ def main():
         # QUIT
         # =====================================================
 
-        key = cv2.waitKey(1) & 0xFF
+        key = (
+            cv2.waitKey(1)
+            & 0xFF
+        )
 
         if key == ord("q"):
             break
 
-    # =========================================================
+    # =====================================================
     # CLEANUP
-    # =========================================================
+    # =====================================================
 
     camera.release()
+
     cv2.destroyAllWindows()
 
     print()
-    print("VisionGuard AI stopped.")
+    print(
+        "VisionGuard AI stopped."
+    )
 
+
+# =========================================================
+# START
+# =========================================================
 
 if __name__ == "__main__":
     main()

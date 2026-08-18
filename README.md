@@ -1,57 +1,68 @@
 # 🛡️ VisionGuard AI
 
-A real-time **Edge AI and Computer Vision** system for person tracking and helmet safety monitoring using **Python, OpenCV, and YOLOv8**.
+### Real-Time Bike Helmet Violation Detection System
 
-VisionGuard AI detects people through a webcam, assigns unique tracking IDs, checks helmet usage, and generates alerts when a person is detected without a helmet.
+VisionGuard AI is a real-time computer vision system that detects people and identifies whether they are wearing a helmet or not.
+
+The system uses YOLO-based object detection, person tracking, multi-frame prediction stabilization, and automatic violation logging to detect helmet violations through a live camera feed.
 
 ---
 
 ## 🚀 Features
 
-- 🎥 Real-time webcam detection
-- 👤 Person detection
-- 🔢 Person counting
-- 🎯 Person tracking with unique IDs
+- 👤 Real-time person detection
 - 🪖 Helmet detection
-- 🚨 Without-helmet alert system
-- 🧠 Head/upper-body ROI based helmet detection
-- 📊 Temporal smoothing for more stable predictions
-- 📸 Automatic screenshot capture for violations
-- 📝 CSV-based violation logging
-- ⚡ Edge AI ready architecture
-- 📈 Real-time FPS monitoring
-- 🎚️ Confidence-based detection
+- 🚫 Without-helmet detection
+- 🎯 Person tracking using ByteTrack
+- 🧠 Multi-frame prediction stabilization
+- 🚨 Automatic no-helmet alert
+- 📸 Automatic violation screenshot
+- 📝 Violation logging
+- 🎥 Real-time webcam detection
+- ⚡ Lightweight YOLO models
+- ▶️ One-command project execution using `run.sh`
 
 ---
 
-## 🧠 System Architecture
+## 🎯 Problem Statement
+
+Riding a motorcycle without a helmet is a major road-safety violation.
+
+Traditional helmet monitoring requires manual observation or expensive surveillance systems.
+
+VisionGuard AI aims to automate this process using computer vision by detecting people in a camera feed and determining whether they are wearing helmets.
+
+---
+
+## 💡 How It Works
+
+The system follows this pipeline:
 
 ```text
-                    Camera
-                       │
-                       ▼
-              YOLOv8 Person Detection
-                       │
-                       ▼
-                 ByteTrack
-                       │
-                       ▼
-                Person Tracking
-                (Unique Person ID)
-                       │
-                       ▼
-                 Head / ROI Crop
-                       │
-                       ▼
-              Helmet Detection Model
-                       │
-             ┌─────────┴─────────┐
-             ▼                   ▼
-        With Helmet         Without Helmet
-             │                   │
-             ▼                   ▼
-          SAFE              🚨 ALERT
-                                 │
-                    ┌────────────┴────────────┐
-                    ▼                         ▼
-              Screenshot                 CSV Log
+Camera Feed
+     │
+     ▼
+Person Detection
+     │
+     ▼
+Person Tracking
+     │
+     ▼
+Head Region Extraction
+     │
+     ▼
+Helmet Detection
+     │
+     ▼
+Multi-Frame Stabilization
+     │
+     ├───────────────┐
+     ▼               ▼
+With Helmet      Without Helmet
+     │               │
+     ▼               ▼
+   SAFE          ALERT
+                     │
+              ┌──────┴──────┐
+              ▼             ▼
+         Screenshot       Log

@@ -1,68 +1,88 @@
 # 🛡️ VisionGuard AI
 
-### Real-Time Bike Helmet Violation Detection System
+### AI-Powered Helmet Detection & Safety Monitoring System
 
-VisionGuard AI is a real-time computer vision system that detects people and identifies whether they are wearing a helmet or not.
+VisionGuard AI is an AI-powered computer vision system designed to detect people and identify whether they are wearing a helmet.
 
-The system uses YOLO-based object detection, person tracking, multi-frame prediction stabilization, and automatic violation logging to detect helmet violations through a live camera feed.
+The project combines **YOLOv8, FastAPI, React, OpenCV, and a custom helmet detection model** to provide both image-based and real-time camera-based helmet detection.
 
 ---
 
 ## 🚀 Features
 
-- 👤 Real-time person detection
-- 🪖 Helmet detection
-- 🚫 Without-helmet detection
-- 🎯 Person tracking using ByteTrack
-- 🧠 Multi-frame prediction stabilization
-- 🚨 Automatic no-helmet alert
-- 📸 Automatic violation screenshot
-- 📝 Violation logging
-- 🎥 Real-time webcam detection
-- ⚡ Lightweight YOLO models
-- ▶️ One-command project execution using `run.sh`
+- 👤 Person Detection
+- 🪖 Helmet Detection
+- 🚫 Without-Helmet Detection
+- 🎥 Real-Time Camera Detection
+- 📷 Image-Based Detection
+- 📊 Real-Time Detection Statistics
+- 📈 Helmet Compliance Percentage
+- 🎯 YOLOv8-based Computer Vision
+- ⚡ FastAPI AI Backend
+- 💻 React + Vite Web Dashboard
+- 🧠 Custom Helmet Detection Model
+- 🖥️ Browser Camera Support
+- 🔍 Detection Confidence Scores
+- 📱 Responsive Web Interface
 
 ---
 
 ## 🎯 Problem Statement
 
-Riding a motorcycle without a helmet is a major road-safety violation.
+Helmet compliance is an important part of road and workplace safety.
 
-Traditional helmet monitoring requires manual observation or expensive surveillance systems.
+Traditional monitoring systems often require continuous manual observation. VisionGuard AI aims to automate helmet monitoring using computer vision.
 
-VisionGuard AI aims to automate this process using computer vision by detecting people in a camera feed and determining whether they are wearing helmets.
+The system detects people from images or camera frames and analyzes the head region to determine whether a helmet is present.
 
 ---
 
-## 💡 How It Works
+## 💡 Solution
 
-The system follows this pipeline:
+VisionGuard AI uses a two-stage detection pipeline:
+
+1. Detect people using YOLOv8.
+2. Extract the upper/head region of each detected person.
+3. Run the custom helmet detection model.
+4. Classify the result as:
+   - `With Helmet`
+   - `Without Helmet`
+   - `Checking...`
+5. Display detection results and compliance statistics.
+
+---
+
+## 🏗️ System Architecture
 
 ```text
-Camera Feed
-     │
-     ▼
-Person Detection
-     │
-     ▼
-Person Tracking
-     │
-     ▼
-Head Region Extraction
-     │
-     ▼
-Helmet Detection
-     │
-     ▼
-Multi-Frame Stabilization
-     │
-     ├───────────────┐
-     ▼               ▼
-With Helmet      Without Helmet
-     │               │
-     ▼               ▼
-   SAFE          ALERT
-                     │
-              ┌──────┴──────┐
-              ▼             ▼
-         Screenshot       Log
+                    VisionGuard AI
+                          │
+             ┌────────────┴────────────┐
+             │                         │
+       Image Detection           Live Camera
+             │                         │
+             └────────────┬────────────┘
+                          │
+                          ▼
+                   React Frontend
+                          │
+                          ▼
+                    FastAPI Backend
+                          │
+                          ▼
+                    YOLOv8 Person
+                     Detection
+                          │
+                          ▼
+                  Head Region Crop
+                          │
+                          ▼
+                Helmet Detection Model
+                          │
+             ┌────────────┴────────────┐
+             │                         │
+             ▼                         ▼
+        With Helmet              Without Helmet
+             │                         │
+             ▼                         ▼
+          SAFE                       ALERT

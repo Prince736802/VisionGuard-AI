@@ -1,6 +1,6 @@
 # 🛡️ VisionGuard AI
 
-### AI-Powered Helmet Detection & Safety Monitoring System
+## AI-Powered Helmet Detection & Safety Monitoring System
 
 VisionGuard AI is an AI-powered computer vision system designed to detect people and identify whether they are wearing a helmet.
 
@@ -70,7 +70,7 @@ VisionGuard AI uses a two-stage detection pipeline:
                     FastAPI Backend
                           │
                           ▼
-                    YOLOv8 Person
+                   YOLOv8 Person
                      Detection
                           │
                           ▼
@@ -85,4 +85,4 @@ VisionGuard AI uses a two-stage detection pipeline:
         With Helmet              Without Helmet
              │                         │
              ▼                         ▼
-          SAFE                       ALERT
+           SAFE                       ALERT
